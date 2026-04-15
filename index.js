@@ -50,20 +50,45 @@ app.post('/interactions', async (req, res) => {
 });
 
 app.post('/register', (req, res) => {
-  const { name } = req.body;
+  const { name, pin } = req.body;
   if (!name) return res.status(400).json({ error: 'İsim gerekli' });
+  if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'PIN 4 haneli rakam olmalı' });
   const userId = uuidv4();
   const code = generateCode();
-  users[userId] = { userId, name, code, meds: [], checked: {}, followers: [], followRequests: [], blocked: [], following: [], createdAt: new Date().toISOString() };
+  users[userId] = { userId, name, pin, code, meds: [], checked: {}, followers: [], followRequests: [], blocked: [], following: [], createdAt: new Date().toISOString() };
   codes[code] = userId;
   res.json({ userId, code, name });
 });
 
+// PIN ile giriş (başka cihazdan)
 app.post('/login', (req, res) => {
-  const { userId } = req.body;
-  if (!userId || !users[userId]) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
-  const u = users[userId];
-  res.json({ userId: u.userId, code: u.code, name: u.name });
+  const { userId, pin, code } = req.body;
+  // userId ile giriş (aynı cihaz)
+  if (userId) {
+    if (!users[userId]) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    const u = users[userId];
+    if (pin && u.pin !== pin) return res.status(401).json({ error: 'PIN hatalı' });
+    return res.json({ userId: u.userId, code: u.code, name: u.name });
+  }
+  // Kod + PIN ile giriş (başka cihaz)
+  if (code && pin) {
+    const u = getUserByCode(code.toUpperCase());
+    if (!u) return res.status(404).json({ error: 'Kod bulunamadı' });
+    if (u.pin !== pin) return res.status(401).json({ error: 'PIN hatalı' });
+    return res.json({ userId: u.userId, code: u.code, name: u.name });
+  }
+  return res.status(400).json({ error: 'Kod ve PIN gerekli' });
+});
+
+// PIN güncelle
+app.post('/update-pin', (req, res) => {
+  const { userId, oldPin, newPin } = req.body;
+  const user = users[userId];
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  if (user.pin !== oldPin) return res.status(401).json({ error: 'Mevcut PIN hatalı' });
+  if (!/^\d{4}$/.test(newPin)) return res.status(400).json({ error: 'Yeni PIN 4 haneli rakam olmalı' });
+  user.pin = newPin;
+  res.json({ ok: true });
 });
 
 app.get('/meds/:userId', (req, res) => {
@@ -91,6 +116,8 @@ app.post('/checked/:userId', (req, res) => {
   user.checked = req.body.checked;
   res.json({ ok: true });
 });
+
+// TAKİP SİSTEMİ
 
 app.post('/follow/request', (req, res) => {
   const { fromUserId, toCode } = req.body;
