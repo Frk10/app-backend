@@ -27,20 +27,12 @@ app.post('/analyze', async (req, res) => {
 {"ilac_adi":"İlaç adı ve dozu","etken_madde":"etken madde","doz":"1 tablet","gunluk_kullanim":2,"saatler":["08:00","20:00"],"yemek_durumu":"aç karnına veya yemekle veya tok karnına veya önemli değil","sure":"süresiz","ozel_uyarilar":"varsa uyarı"}
 yemek_durumu için SADECE şu değerlerden birini kullan: "aç karnına", "yemekle", "tok karnına", "önemli değil"`;
     const payload = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mimeType || 'image/jpeg', data: imageBase64 } }] }] };
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-    );
-    if (!geminiRes.ok) {
-      const err = await geminiRes.json();
-      return res.status(geminiRes.status).json({ error: err.error?.message || 'Gemini hatası' });
-    }
+    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!geminiRes.ok) { const err = await geminiRes.json(); return res.status(geminiRes.status).json({ error: err.error?.message || 'Gemini hatası' }); }
     const data = await geminiRes.json();
     let text = data.candidates[0].content.parts[0].text.trim().replace(/```json|```/gi, '').trim();
     res.json(JSON.parse(text));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/interactions', async (req, res) => {
@@ -48,22 +40,13 @@ app.post('/interactions', async (req, res) => {
     const { meds } = req.body;
     if (!meds || meds.length < 2) return res.json({ etkilesimler: [] });
     const liste = meds.map(m => `- ${m.ilac_adi} (${m.doz})`).join('\n');
-    const prompt = `Aşağıdaki ilaçlar aynı hastada kullanılıyor. Klinik olarak önemli etkileşimleri bul.
-SADECE JSON döndür:
-{"etkilesimler": [{"ilaclar": "İlaç A + İlaç B", "risk": "yüksek veya orta", "oneri": "2 cümle: ne olur, ne yapmalı (doktorunuza danışın ile bitir)"}]}
-Etkileşim yoksa: {"etkilesimler": []}
-İlaçlar:\n${liste}`;
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
-    );
+    const prompt = `Aşağıdaki ilaçlar aynı hastada kullanılıyor. Klinik olarak önemli etkileşimleri bul. SADECE JSON döndür:\n{"etkilesimler": [{"ilaclar": "İlaç A + İlaç B", "risk": "yüksek veya orta", "oneri": "2 cümle: ne olur, ne yapmalı (doktorunuza danışın ile bitir)"}]}\nEtkileşim yoksa: {"etkilesimler": []}\nİlaçlar:\n${liste}`;
+    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
     if (!geminiRes.ok) return res.json({ etkilesimler: [] });
     const data = await geminiRes.json();
     let text = data.candidates[0].content.parts[0].text.trim().replace(/```json|```/gi, '').trim();
     res.json(JSON.parse(text));
-  } catch (err) {
-    res.json({ etkilesimler: [] });
-  }
+  } catch (err) { res.json({ etkilesimler: [] }); }
 });
 
 app.post('/register', (req, res) => {
@@ -71,7 +54,7 @@ app.post('/register', (req, res) => {
   if (!name) return res.status(400).json({ error: 'İsim gerekli' });
   const userId = uuidv4();
   const code = generateCode();
-  users[userId] = { userId, name, code, meds: [], checked: {}, createdAt: new Date().toISOString() };
+  users[userId] = { userId, name, code, meds: [], checked: {}, followers: [], followRequests: [], blocked: [], following: [], createdAt: new Date().toISOString() };
   codes[code] = userId;
   res.json({ userId, code, name });
 });
@@ -109,9 +92,96 @@ app.post('/checked/:userId', (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/follow/request', (req, res) => {
+  const { fromUserId, toCode } = req.body;
+  const fromUser = users[fromUserId];
+  const toUser = getUserByCode(toCode.toUpperCase());
+  if (!fromUser) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  if (!toUser) return res.status(404).json({ error: 'Kod bulunamadı, kontrol edin' });
+  if (toUser.userId === fromUserId) return res.status(400).json({ error: 'Kendinizi takip edemezsiniz' });
+  if ((toUser.blocked || []).includes(fromUserId)) return res.status(403).json({ error: 'Bu kullanıcıya istek gönderemezsiniz' });
+  if ((toUser.followers || []).some(f => f.userId === fromUserId)) return res.status(400).json({ error: 'Zaten takip ediyorsunuz' });
+  if ((toUser.followRequests || []).some(r => r.userId === fromUserId)) return res.status(400).json({ error: 'İstek zaten gönderildi, onay bekleniyor' });
+  if (!toUser.followRequests) toUser.followRequests = [];
+  toUser.followRequests.push({ userId: fromUserId, name: fromUser.name, requestedAt: new Date().toISOString() });
+  res.json({ ok: true, toName: toUser.name });
+});
+
+app.get('/follow/requests/:userId', (req, res) => {
+  const user = users[req.params.userId];
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  res.json(user.followRequests || []);
+});
+
+app.post('/follow/approve', (req, res) => {
+  const { userId, requesterUserId } = req.body;
+  const user = users[userId];
+  const requester = users[requesterUserId];
+  if (!user || !requester) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  const reqIdx = (user.followRequests || []).findIndex(r => r.userId === requesterUserId);
+  if (reqIdx === -1) return res.status(404).json({ error: 'İstek bulunamadı' });
+  user.followRequests.splice(reqIdx, 1);
+  if (!user.followers) user.followers = [];
+  user.followers.push({ userId: requesterUserId, name: requester.name, approvedAt: new Date().toISOString() });
+  if (!requester.following) requester.following = [];
+  requester.following.push({ userId: user.userId, name: user.name, code: user.code });
+  res.json({ ok: true });
+});
+
+app.post('/follow/reject', (req, res) => {
+  const { userId, requesterUserId } = req.body;
+  const user = users[userId];
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  user.followRequests = (user.followRequests || []).filter(r => r.userId !== requesterUserId);
+  res.json({ ok: true });
+});
+
+app.post('/follow/remove', (req, res) => {
+  const { userId, followerUserId, block } = req.body;
+  const user = users[userId];
+  const follower = users[followerUserId];
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  user.followers = (user.followers || []).filter(f => f.userId !== followerUserId);
+  if (block) { if (!user.blocked) user.blocked = []; if (!user.blocked.includes(followerUserId)) user.blocked.push(followerUserId); }
+  if (follower) follower.following = (follower.following || []).filter(f => f.userId !== userId);
+  res.json({ ok: true });
+});
+
+app.get('/follow/following/:userId', (req, res) => {
+  const user = users[req.params.userId];
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  res.json(user.following || []);
+});
+
+app.get('/follow/followers/:userId', (req, res) => {
+  const user = users[req.params.userId];
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  res.json(user.followers || []);
+});
+
+app.get('/family/user/:targetUserId', (req, res) => {
+  const { viewerUserId } = req.query;
+  const target = users[req.params.targetUserId];
+  if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  const isFollower = (target.followers || []).some(f => f.userId === viewerUserId);
+  if (!isFollower) return res.status(403).json({ error: 'Takip izniniz yok' });
+  const today = new Date().toISOString().split('T')[0];
+  const todayChecked = target.checked[today] || {};
+  let totalDose = 0, takenDose = 0, missedDoses = [];
+  const now = new Date();
+  const nowTime = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  target.meds.forEach(med => {
+    (med.saatler || []).forEach(saat => {
+      const key = `${med.id}_${saat}`;
+      if (saat <= nowTime) { totalDose++; if (todayChecked[key]) takenDose++; else missedDoses.push({ ilac: med.ilac_adi, saat }); }
+    });
+  });
+  res.json({ name: target.name, today, totalDose, takenDose, missedDoses, uyumPct: totalDose > 0 ? Math.round(takenDose / totalDose * 100) : null, meds: target.meds, checked: target.checked });
+});
+
 app.get('/family/:code', (req, res) => {
   const user = getUserByCode(req.params.code.toUpperCase());
-  if (!user) return res.status(404).json({ error: 'Kod bulunamadı. Kodu kontrol edin.' });
+  if (!user) return res.status(404).json({ error: 'Kod bulunamadı' });
   const today = new Date().toISOString().split('T')[0];
   const todayChecked = user.checked[today] || {};
   let totalDose = 0, takenDose = 0, missedDoses = [];
@@ -120,18 +190,10 @@ app.get('/family/:code', (req, res) => {
   user.meds.forEach(med => {
     (med.saatler || []).forEach(saat => {
       const key = `${med.id}_${saat}`;
-      if (saat <= nowTime) {
-        totalDose++;
-        if (todayChecked[key]) takenDose++;
-        else missedDoses.push({ ilac: med.ilac_adi, saat });
-      }
+      if (saat <= nowTime) { totalDose++; if (todayChecked[key]) takenDose++; else missedDoses.push({ ilac: med.ilac_adi, saat }); }
     });
   });
-  res.json({
-    name: user.name, today, totalDose, takenDose, missedDoses,
-    uyumPct: totalDose > 0 ? Math.round(takenDose / totalDose * 100) : null,
-    meds: user.meds, checked: user.checked
-  });
+  res.json({ name: user.name, today, totalDose, takenDose, missedDoses, uyumPct: totalDose > 0 ? Math.round(takenDose / totalDose * 100) : null, meds: user.meds, checked: user.checked });
 });
 
 app.get('/', (req, res) => res.json({ status: 'ok', message: 'Sağlıklı Kal Backend çalışıyor 💊' }));
