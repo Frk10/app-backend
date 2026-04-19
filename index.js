@@ -24,7 +24,9 @@ const userSchema = new mongoose.Schema({
   code: { type: String, unique: true },
   banned: { type: Boolean, default: false },
   meds: { type: mongoose.Schema.Types.Mixed, default: [] },
+  meds_archive: { type: mongoose.Schema.Types.Mixed, default: [] },
   checked: { type: mongoose.Schema.Types.Mixed, default: {} },
+  messages: { type: mongoose.Schema.Types.Mixed, default: [] },
   followers: { type: mongoose.Schema.Types.Mixed, default: [] },
   followRequests: { type: mongoose.Schema.Types.Mixed, default: [] },
   blocked: { type: mongoose.Schema.Types.Mixed, default: [] },
@@ -356,10 +358,71 @@ app.get('/family/:code', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// İlaç arşivi
+app.get('/meds-archive/:userId', auth, async (req, res) => {
+  try {
+    if (req.userId !== req.params.userId) return res.status(403).json({ error: 'Yetkisiz' });
+    const user = await User.findOne({ userId: req.params.userId });
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    res.json(user.meds_archive || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/meds-archive/:userId', auth, async (req, res) => {
+  try {
+    if (req.userId !== req.params.userId) return res.status(403).json({ error: 'Yetkisiz' });
+    const user = await User.findOne({ userId: req.params.userId });
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    user.meds_archive = req.body.meds_archive;
+    user.markModified('meds_archive');
+    await user.save();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Mesajlaşma
+app.post('/message/send', auth, async (req, res) => {
+  try {
+    const { toUserId, text } = req.body;
+    if (!toUserId || !text) return res.status(400).json({ error: 'Eksik alan' });
+    const fromUser = await User.findOne({ userId: req.userId });
+    const toUser = await User.findOne({ userId: toUserId });
+    if (!fromUser || !toUser) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    const isFollower = (toUser.followers || []).some(f => f.userId === req.userId);
+    if (!isFollower) return res.status(403).json({ error: 'Sadece takip ettiğiniz kişilere mesaj gönderebilirsiniz' });
+    const msg = { from: req.userId, fromName: fromUser.name, text, sentAt: new Date().toISOString(), read: false };
+    if (!toUser.messages) toUser.messages = [];
+    toUser.messages.push(msg);
+    toUser.markModified('messages');
+    await toUser.save();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/message/inbox/:userId', auth, async (req, res) => {
+  try {
+    if (req.userId !== req.params.userId) return res.status(403).json({ error: 'Yetkisiz' });
+    const user = await User.findOne({ userId: req.params.userId });
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    res.json(user.messages || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/message/read', auth, async (req, res) => {
+  try {
+    const user = await User.findOne({ userId: req.userId });
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    (user.messages || []).forEach(m => { m.read = true; });
+    user.markModified('messages');
+    await user.save();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Admin API
 app.get('/admin/users', adminAuth, async (req, res) => {
   try {
-    const users = await User.find({}, { pin: 0 }).lean();
+    const users = await User.find({ banned: { $ne: true } }, { pin: 0 }).lean();
     res.json(users.map(u => ({
       userId: u.userId, name: u.name, code: u.code,
       medCount: (u.meds || []).length,
