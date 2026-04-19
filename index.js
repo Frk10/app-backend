@@ -420,6 +420,26 @@ app.post('/message/read', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Takip - ilaç alındı bildirimi
+app.post('/family/notify-taken', auth, async (req, res) => {
+  try {
+    const { medName, saat } = req.body;
+    const user = await User.findOne({ userId: req.userId });
+    if (!user || !(user.followers || []).length) return res.json({ ok: true });
+    const text = `✅ ${user.name} — ${medName}${saat ? ' (' + saat + ')' : ''} ilacını aldı!`;
+    const msg = { from: req.userId, fromName: user.name, text, sentAt: new Date().toISOString(), read: false, type: 'taken' };
+    await Promise.all((user.followers).map(async f => {
+      const follower = await User.findOne({ userId: f.userId });
+      if (!follower) return;
+      if (!follower.messages) follower.messages = [];
+      follower.messages.push(msg);
+      follower.markModified('messages');
+      return follower.save();
+    }));
+    res.json({ ok: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
 // Admin API
 app.get('/admin/users', adminAuth, async (req, res) => {
   try {
