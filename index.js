@@ -87,8 +87,9 @@ app.post('/analyze', auth, async (req, res) => {
     const { imageBase64, mimeType } = req.body;
     if (!imageBase64) return res.status(400).json({ error: 'Görüntü gerekli' });
     const prompt = `Bu bir ilaç kutusu veya prospektüs görüntüsüdür. Kullanım talimatlarını analiz et. SADECE şu JSON formatında yanıt ver, başka hiçbir şey yazma, markdown backtick kullanma:
-{"ilac_adi":"İlaç adı ve dozu","etken_madde":"etken madde","doz":"1 tablet","gunluk_kullanim":2,"saatler":["08:00","20:00"],"yemek_durumu":"aç karnına veya yemekle veya tok karnına veya önemli değil","sure":"süresiz","ozel_uyarilar":"varsa uyarı"}
-yemek_durumu için SADECE şu değerlerden birini kullan: "aç karnına", "yemekle", "tok karnına", "önemli değil"`;
+{"ilac_adi":"İlaç adı ve dozu","etken_madde":"etken madde","doz":"1 tablet","gunluk_kullanim":2,"saatler":["08:00","20:00"],"yemek_durumu":"aç karnına veya yemekle veya tok karnına veya önemli değil","sure":"süresiz","bitis_tarihi":null,"ozel_uyarilar":"varsa uyarı"}
+yemek_durumu için SADECE şu değerlerden birini kullan: "aç karnına", "yemekle", "tok karnına", "önemli değil"
+bitis_tarihi için: kutuda son kullanma tarihi / SKT / EXP tarihi varsa YYYY-MM-DD formatında yaz, yoksa null yaz. Tedavi bitiş süresini bitis_tarihi olarak yazma, sadece gerçek son kullanma tarihini yaz.`;
     const payload = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mimeType || 'image/jpeg', data: imageBase64 } }] }] };
     const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!geminiRes.ok) { const err = await geminiRes.json(); return res.status(geminiRes.status).json({ error: err.error?.message || 'Gemini hatası' }); }
