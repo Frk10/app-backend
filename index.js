@@ -80,7 +80,7 @@ function adminAuth(req, res, next) {
 }
 
 // Gemini: ilaç analizi
-app.post('/analyze', async (req, res) => {
+app.post('/analyze', auth, async (req, res) => {
   try {
     const { imageBase64, mimeType } = req.body;
     if (!imageBase64) return res.status(400).json({ error: 'Görüntü gerekli' });
@@ -97,7 +97,7 @@ yemek_durumu için SADECE şu değerlerden birini kullan: "aç karnına", "yemek
 });
 
 // Gemini: ilaç etkileşimleri
-app.post('/interactions', async (req, res) => {
+app.post('/interactions', auth, async (req, res) => {
   try {
     const { meds } = req.body;
     if (!meds || meds.length < 2) return res.json({ etkilesimler: [] });
