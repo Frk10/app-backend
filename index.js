@@ -423,9 +423,9 @@ app.get('/admin', (req, res) => {
   .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
   .tab-btn { padding: 8px 20px; border-radius: 8px; border: none; background: #1e293b; color: #94a3b8; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
   .tab-btn.active { background: #38bdf8; color: #0f172a; }
-  .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
   .photo-card { background: #1e293b; border-radius: 10px; overflow: hidden; }
-  .photo-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+  .photo-card img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; background: #0f172a; }
   .photo-info { padding: 8px 10px; }
   .photo-name { font-size: 0.8rem; font-weight: 700; color: #e2e8f0; }
   .photo-meta { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
