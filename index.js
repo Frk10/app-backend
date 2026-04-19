@@ -384,7 +384,7 @@ app.post('/meds-archive/:userId', auth, async (req, res) => {
 // Mesajlaşma
 app.post('/message/send', auth, async (req, res) => {
   try {
-    const { toUserId, text } = req.body;
+    const { toUserId, text, medName, saat } = req.body;
     if (!toUserId || !text) return res.status(400).json({ error: 'Eksik alan' });
     const fromUser = await User.findOne({ userId: req.userId });
     const toUser = await User.findOne({ userId: toUserId });
@@ -392,6 +392,8 @@ app.post('/message/send', auth, async (req, res) => {
     const isFollower = (toUser.followers || []).some(f => f.userId === req.userId);
     if (!isFollower) return res.status(403).json({ error: 'Sadece takip ettiğiniz kişilere mesaj gönderebilirsiniz' });
     const msg = { from: req.userId, fromName: fromUser.name, text, sentAt: new Date().toISOString(), read: false };
+    if (medName) msg.medName = medName;
+    if (saat) msg.saat = saat;
     if (!toUser.messages) toUser.messages = [];
     toUser.messages.push(msg);
     toUser.markModified('messages');
@@ -418,6 +420,18 @@ app.post('/message/read', auth, async (req, res) => {
     await user.save();
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/message/delete', auth, async (req, res) => {
+  try {
+    const { sentAt } = req.body;
+    const user = await User.findOne({ userId: req.userId });
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+    user.messages = (user.messages || []).filter(m => m.sentAt !== sentAt);
+    user.markModified('messages');
+    await user.save();
+    res.json({ ok: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 // Takip - ilaç alındı bildirimi
