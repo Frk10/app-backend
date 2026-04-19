@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema({
   name: String,
   pin: String,
   code: { type: String, unique: true },
+  banned: { type: Boolean, default: false },
   meds: { type: mongoose.Schema.Types.Mixed, default: [] },
   checked: { type: mongoose.Schema.Types.Mixed, default: {} },
   followers: { type: mongoose.Schema.Types.Mixed, default: [] },
@@ -59,11 +60,15 @@ function signToken(userId) {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
 }
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token gerekli' });
   try {
-    req.userId = jwt.verify(header.slice(7), JWT_SECRET).userId;
+    const { userId } = jwt.verify(header.slice(7), JWT_SECRET);
+    const u = await User.findOne({ userId }, { banned: 1 }).lean();
+    if (!u) return res.status(401).json({ error: 'Hesap bulunamadı' });
+    if (u.banned) return res.status(403).json({ error: 'Hesap askıya alınmış' });
+    req.userId = userId;
     next();
   } catch { res.status(401).json({ error: 'Geçersiz veya süresi dolmuş token' }); }
 }
@@ -127,6 +132,7 @@ app.post('/login', authLimiter, async (req, res) => {
     if (userId) {
       const u = await User.findOne({ userId });
       if (!u) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+      if (u.banned) return res.status(403).json({ error: 'Bu hesap askıya alınmış' });
       if (pin) {
         const ok = await bcrypt.compare(String(pin), u.pin);
         if (!ok) return res.status(401).json({ error: 'PIN hatalı' });
@@ -136,6 +142,7 @@ app.post('/login', authLimiter, async (req, res) => {
     if (code && pin) {
       const u = await User.findOne({ code: code.toUpperCase() });
       if (!u) return res.status(404).json({ error: 'Kod bulunamadı' });
+      if (u.banned) return res.status(403).json({ error: 'Bu hesap askıya alınmış' });
       const ok = await bcrypt.compare(String(pin), u.pin);
       if (!ok) return res.status(401).json({ error: 'PIN hatalı' });
       return res.json({ userId: u.userId, code: u.code, name: u.name, token: signToken(u.userId) });
@@ -365,7 +372,7 @@ app.get('/admin/users', adminAuth, async (req, res) => {
 
 app.delete('/admin/users/:userId', adminAuth, async (req, res) => {
   try {
-    await User.deleteOne({ userId: req.params.userId });
+    await User.findOneAndUpdate({ userId: req.params.userId }, { banned: true, pin: '', meds: [], checked: {}, followers: [], followRequests: [], following: [] });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
