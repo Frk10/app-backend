@@ -370,6 +370,26 @@ app.delete('/admin/users/:userId', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/admin/photos', adminAuth, async (req, res) => {
+  try {
+    const users = await User.find({}, { pin: 0 }).lean();
+    const photos = [];
+    users.forEach(u => {
+      (u.meds || []).forEach(med => {
+        if (med.thumbnail) {
+          photos.push({
+            userName: u.name, userCode: u.code,
+            ilac_adi: med.ilac_adi, doz: med.doz,
+            thumbnail: med.thumbnail,
+            addedAt: med.id ? new Date(parseInt(med.id.replace('med_', ''))).toISOString() : null
+          });
+        }
+      });
+    });
+    res.json(photos);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Admin paneli (tarayıcıdan açılır, anahtar HTML içinde istenir)
 app.get('/admin', (req, res) => {
   res.send(`<!DOCTYPE html>
@@ -400,6 +420,16 @@ app.get('/admin', (req, res) => {
   .del-btn:hover { background: #991b1b; }
   #error { color: #f87171; margin-top: 8px; font-size: 0.875rem; }
   #content { display: none; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab-btn { padding: 8px 20px; border-radius: 8px; border: none; background: #1e293b; color: #94a3b8; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+  .tab-btn.active { background: #38bdf8; color: #0f172a; }
+  .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .photo-card { background: #1e293b; border-radius: 10px; overflow: hidden; }
+  .photo-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+  .photo-info { padding: 8px 10px; }
+  .photo-name { font-size: 0.8rem; font-weight: 700; color: #e2e8f0; }
+  .photo-meta { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
+  #photos-panel { display: none; }
 </style>
 </head>
 <body>
@@ -412,10 +442,19 @@ app.get('/admin', (req, res) => {
 <div id="content">
   <h1>💊 Sağlıklı Kal — Admin Paneli</h1>
   <div class="stats" id="stats"></div>
-  <table>
-    <thead><tr><th>İsim</th><th>Kod</th><th>İlaç</th><th>Takipçi</th><th>Takip</th><th>Kayıt</th><th></th></tr></thead>
-    <tbody id="tbody"></tbody>
-  </table>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('users')">👥 Kullanıcılar</button>
+    <button class="tab-btn" onclick="showTab('photos')">📷 Taranan Fotoğraflar</button>
+  </div>
+  <div id="users-panel">
+    <table>
+      <thead><tr><th>İsim</th><th>Kod</th><th>İlaç</th><th>Takipçi</th><th>Takip</th><th>Kayıt</th><th></th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div id="photos-panel">
+    <div class="photo-grid" id="photo-grid"></div>
+  </div>
 </div>
 <script>
 let adminKey = '';
@@ -428,6 +467,30 @@ async function login() {
   renderUsers(await res.json());
 }
 document.getElementById('keyInput').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+function showTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('users-panel').style.display = tab === 'users' ? 'block' : 'none';
+  document.getElementById('photos-panel').style.display = tab === 'photos' ? 'block' : 'none';
+  if (tab === 'photos') loadPhotos();
+}
+async function loadPhotos() {
+  const grid = document.getElementById('photo-grid');
+  grid.innerHTML = '<div style="color:#94a3b8;padding:20px;">Yükleniyor...</div>';
+  const res = await fetch('/admin/photos', { headers: { 'x-admin-key': adminKey } });
+  const photos = await res.json();
+  if (photos.length === 0) { grid.innerHTML = '<div style="color:#94a3b8;padding:20px;">Henüz taranan fotoğraf yok.</div>'; return; }
+  grid.innerHTML = photos.map(p => \`
+    <div class="photo-card">
+      <img src="data:image/jpeg;base64,\${p.thumbnail}" alt="\${p.ilac_adi}" />
+      <div class="photo-info">
+        <div class="photo-name">\${p.ilac_adi}</div>
+        <div class="photo-meta">\${p.userName} · \${p.doz}</div>
+        <div class="photo-meta">\${p.addedAt ? new Date(p.addedAt).toLocaleDateString('tr-TR') : ''}</div>
+      </div>
+    </div>
+  \`).join('');
+}
 function renderUsers(users) {
   const totalMeds = users.reduce((s, u) => s + u.medCount, 0);
   document.getElementById('stats').innerHTML = \`
