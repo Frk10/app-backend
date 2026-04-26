@@ -628,5 +628,135 @@ async function deleteUser(userId, name) {
 
 app.get('/', (req, res) => res.json({ status: 'ok', message: 'Sağlıklı Kal Backend çalışıyor 💊' }));
 
+// ── ECZANE API ──
+function calcDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+}
+
+// Yakın eczaneler — OpenStreetMap Overpass (ücretsiz, API key yok)
+app.get('/api/nearby-pharmacies', async (req, res) => {
+  const { lat, lng, radius = 3000 } = req.query;
+  if (!lat || !lng) return res.status(400).json({ error: 'lat ve lng gerekli' });
+  try {
+    const query = `[out:json][timeout:15];node["amenity"="pharmacy"](around:${radius},${lat},${lng});out body;`;
+    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    const pharmacies = (data.elements || []).map(el => ({
+      id: el.id,
+      name: el.tags.name || el.tags['name:tr'] || 'Eczane',
+      lat: el.lat,
+      lng: el.lon,
+      phone: el.tags.phone || el.tags['contact:phone'] || null,
+      address: [el.tags['addr:street'], el.tags['addr:housenumber']].filter(Boolean).join(' ') || null,
+      distance: calcDistance(parseFloat(lat), parseFloat(lng), el.lat, el.lon)
+    })).sort((a, b) => a.distance - b.distance).slice(0, 25);
+    res.json({ pharmacies });
+  } catch(e) {
+    res.status(500).json({ error: 'Eczane verisi alınamadı', pharmacies: [] });
+  }
+});
+
+// Nöbetçi eczane — eczaneler.net scraping (API key yok, tamamen ücretsiz)
+const cheerio = require('cheerio');
+
+const CITY_SLUGS = {
+  'İstanbul':'istanbul','Ankara':'ankara','İzmir':'izmir','Bursa':'bursa','Antalya':'antalya',
+  'Adana':'adana','Konya':'konya','Gaziantep':'gaziantep','Mersin':'mersin','Kocaeli':'kocaeli',
+  'Diyarbakır':'diyarbakir','Eskişehir':'eskisehir','Samsun':'samsun','Kayseri':'kayseri',
+  'Balıkesir':'balikesir','Sakarya':'sakarya','Trabzon':'trabzon','Malatya':'malatya',
+  'Kahramanmaraş':'kahramanmaras','Erzurum':'erzurum','Van':'van','Aydın':'aydin',
+  'Muğla':'mugla','Manisa':'manisa','Tekirdağ':'tekirdag','Hatay':'hatay','Denizli':'denizli',
+  'Şanlıurfa':'sanliurfa','Afyonkarahisar':'afyonkarahisar','Ordu':'ordu','Sivas':'sivas',
+  'Rize':'rize','Giresun':'giresun','Tokat':'tokat','Çorum':'corum','Elazığ':'elazig',
+  'Edirne':'edirne','Bolu':'bolu','Isparta':'isparta','Burdur':'burdur','Kastamonu':'kastamonu',
+  'Kırıkkale':'kirikkale','Zonguldak':'zonguldak','Karabük':'karabuk','Düzce':'duzce',
+  'Yalova':'yalova','Kırklareli':'kirklareli','Sinop':'sinop','Bartın':'bartin',
+  'Çanakkale':'canakkale','Nevşehir':'nevsehir','Aksaray':'aksaray','Niğde':'nigde',
+  'Karaman':'karaman','Kırşehir':'kirsehir','Yozgat':'yozgat','Amasya':'amasya',
+  'Tunceli':'tunceli','Erzincan':'erzincan','Ardahan':'ardahan','Kars':'kars',
+  'Ağrı':'agri','Iğdır':'igdir','Muş':'mus','Bitlis':'bitlis','Siirt':'siirt',
+  'Batman':'batman','Şırnak':'sirnak','Mardin':'mardin','Hakkari':'hakkari',
+  'Adıyaman':'adiyaman','Osmaniye':'osmaniye','Kilis':'kilis','Gümüşhane':'gumushane',
+  'Bayburt':'bayburt','Artvin':'artvin','Çankırı':'cankiri','Bilecik':'bilecik',
+  'Uşak':'usak','Kütahya':'kutahya'
+};
+
+// Nöbetçi eczane cache (her gün güncellenir)
+const _dutyCache = {};
+
+app.get('/api/duty-pharmacies', async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.status(400).json({ error: 'lat ve lng gerekli' });
+  try {
+    // Şehri bul
+    const geoUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=tr`;
+    const geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'SaglikliKal/1.0' } });
+    const geoData = await geoRes.json();
+    const cityRaw = geoData.address?.province || geoData.address?.city || geoData.address?.state || 'İstanbul';
+    const city = Object.keys(CITY_SLUGS).find(k => cityRaw.toLowerCase().includes(k.toLowerCase().replace('İ','i'))) || 'İstanbul';
+    const slug = CITY_SLUGS[city] || 'istanbul';
+
+    // Cache kontrolü (gün bazlı)
+    const today = new Date().toISOString().split('T')[0];
+    const cacheKey = `${slug}_${today}`;
+    if (_dutyCache[cacheKey]) {
+      const cached = _dutyCache[cacheKey];
+      const pharmacies = cached.map(p => ({
+        ...p,
+        distance: (p.lat && p.lng) ? calcDistance(parseFloat(lat), parseFloat(lng), p.lat, p.lng) : null
+      })).sort((a, b) => (a.distance ?? 999999) - (b.distance ?? 999999));
+      return res.json({ pharmacies, city });
+    }
+
+    // eczaneler.net scraping
+    const url = `https://www.eczaneler.net/nobetci-eczane/${slug}`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; SaglikliKal/1.0)',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'tr-TR,tr;q=0.9'
+      }
+    });
+    const html = await r.text();
+    const $ = cheerio.load(html);
+    const pharmacies = [];
+
+    // eczaneler.net HTML yapısını parse et
+    $('.eczane-item, .nobetci-item, .pharmacy-item, table tbody tr').each((i, el) => {
+      const row = $(el);
+      const name = row.find('.eczane-adi, .name, td:nth-child(1)').text().trim() ||
+                   row.find('h3, h4, strong').first().text().trim();
+      const address = row.find('.adres, .address, td:nth-child(2)').text().trim();
+      const phone = row.find('.telefon, .phone, td:nth-child(3)').text().trim().replace(/\s+/g, '');
+      const district = row.find('.ilce, .district').text().trim();
+      if (name && name.length > 2) {
+        pharmacies.push({ name, address, phone: phone || null, district: district || null, lat: null, lng: null });
+      }
+    });
+
+    // Alternatif: genel metin tabanlı parse
+    if (pharmacies.length === 0) {
+      $('h2,h3,h4,.card,.list-item').each((i, el) => {
+        const text = $(el).text().trim();
+        if (text.includes('ECZ') || text.includes('Ecz')) {
+          pharmacies.push({ name: text.split('\n')[0].trim(), address: null, phone: null, district: null, lat: null, lng: null });
+        }
+      });
+    }
+
+    // Cache'e kaydet
+    if (pharmacies.length > 0) _dutyCache[cacheKey] = pharmacies;
+
+    res.json({ pharmacies, city });
+  } catch(e) {
+    res.status(500).json({ error: 'Nöbetçi eczane verisi alınamadı', pharmacies: [], detail: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Sağlıklı Kal Backend port ${PORT}'de çalışıyor`));
