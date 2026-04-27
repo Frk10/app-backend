@@ -713,55 +713,55 @@ app.get('/api/duty-pharmacies', async (req, res) => {
       return res.json({ pharmacies, city });
     }
 
-    // nobiron.com scraping — daha temiz HTML yapısı
-    const url = `https://www.nobiron.com/nobetci-eczane/${slug}`;
-    const r = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8'
-      }
-    });
-    const html = await r.text();
-    const $ = cheerio.load(html);
-    const pharmacies = [];
+    // Birden fazla kaynaktan dene
+    const HEADERS = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'tr-TR,tr;q=0.9',
+    };
+    const SOURCES = [
+      `https://www.eczaneler.net/nobetci-eczane/${slug}`,
+      `https://www.nobiron.com/nobetci-eczane/${slug}`,
+      `https://www.eczanem.com/nobetci-eczane/${slug}`,
+    ];
     const ECZAN = /eczan/i;
-    const PHONE = /0?\s*\(?\d{3}\)?\s*\d{3}\s*\d{2}\s*\d{2}/;
+    const PHONE = /0?\s*\(?\d{3}\)?\s*\d{3}[\s-]?\d{2}[\s-]?\d{2}/;
+    let pharmacies = [];
 
-    // Tablo satırlarında eczane adı ara
-    $('tr').each((i, el) => {
-      const cells = $(el).find('td');
-      if (cells.length < 1) return;
-      const name = $(cells[0]).text().trim();
-      if (!ECZAN.test(name) || name.length < 4) return;
-      const address = cells.length > 1 ? $(cells[1]).text().trim() : null;
-      const phoneRaw = cells.length > 2 ? $(cells[2]).text().trim() : (address || '');
-      const phoneMatch = phoneRaw.match(PHONE);
-      pharmacies.push({
-        name,
-        address: address || null,
-        phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null,
-        district: null, lat: null, lng: null
-      });
-    });
+    for (const url of SOURCES) {
+      try {
+        const r = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+        if (!r.ok) continue;
+        const html = await r.text();
+        const $ = cheerio.load(html);
 
-    // Tablo yoksa: div/li bazlı parse
-    if (pharmacies.length === 0) {
-      $('div, li, article, section').each((i, el) => {
-        const el$ = $(el);
-        const children = el$.children();
-        if (children.length > 5) return; // çok derin elementleri atla
-        const text = el$.clone().children().remove().end().text().trim();
-        if (!ECZAN.test(text) || text.length < 4 || text.length > 80) return;
-        const full = el$.text().trim();
-        const phoneMatch = full.match(PHONE);
-        pharmacies.push({
-          name: text,
-          address: null,
-          phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null,
-          district: null, lat: null, lng: null
+        // Tablo parse
+        $('tr').each((i, el) => {
+          const cells = $(el).find('td');
+          if (cells.length < 2) return;
+          const name = $(cells[0]).text().trim();
+          if (!ECZAN.test(name) || name.length < 5 || name.length > 100) return;
+          const address = $(cells[1]).text().trim();
+          const phoneRaw = cells.length > 2 ? $(cells[2]).text().trim() : address;
+          const phoneMatch = phoneRaw.match(PHONE);
+          pharmacies.push({ name, address: address || null, phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null, district: null, lat: null, lng: null });
         });
-      });
+
+        // Card/list parse
+        if (pharmacies.length === 0) {
+          $('[class*="eczane"],[class*="pharmacy"],[class*="nobetci"],[class*="card"]').each((i, el) => {
+            const el$ = $(el);
+            const name = el$.find('h2,h3,h4,strong,.name,.title').first().text().trim();
+            if (!name || !ECZAN.test(name) || name.length < 5) return;
+            const address = el$.find('.adres,.address,p').first().text().trim();
+            const full = el$.text();
+            const phoneMatch = full.match(PHONE);
+            pharmacies.push({ name, address: address || null, phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null, district: null, lat: null, lng: null });
+          });
+        }
+
+        if (pharmacies.length > 0) break; // Veri geldiyse dur
+      } catch(e) { continue; }
     }
 
     // Cache'e kaydet
