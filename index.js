@@ -741,7 +741,8 @@ app.get('/api/duty-pharmacies', async (req, res) => {
     const cityId = CITY_IDS[city] || 34;
     const r = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=${cityId}&apikey=${NOSYAPI_KEY}`);
     const data = await r.json();
-    const pharmacies = (data.data || []).map(p => ({
+    console.log('nosyapi response:', JSON.stringify(data).slice(0, 500));
+    const pharmacies = (data.data || data.result || data.pharmacies || []).map(p => ({
       name: p.eczane_adi || p.name || '',
       address: p.adres || p.address || null,
       phone: p.telefon || p.phone || null,
