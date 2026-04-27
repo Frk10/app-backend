@@ -713,39 +713,54 @@ app.get('/api/duty-pharmacies', async (req, res) => {
       return res.json({ pharmacies, city });
     }
 
-    // eczaneler.net scraping
-    const url = `https://www.eczaneler.net/nobetci-eczane/${slug}`;
+    // nobiron.com scraping — daha temiz HTML yapısı
+    const url = `https://www.nobiron.com/nobetci-eczane/${slug}`;
     const r = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; SaglikliKal/1.0)',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'tr-TR,tr;q=0.9'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8'
       }
     });
     const html = await r.text();
     const $ = cheerio.load(html);
     const pharmacies = [];
+    const ECZAN = /eczan/i;
+    const PHONE = /0?\s*\(?\d{3}\)?\s*\d{3}\s*\d{2}\s*\d{2}/;
 
-    // eczaneler.net HTML yapısını parse et
-    $('.eczane-item, .nobetci-item, .pharmacy-item, table tbody tr').each((i, el) => {
-      const row = $(el);
-      const name = row.find('.eczane-adi, .name, td:nth-child(1)').text().trim() ||
-                   row.find('h3, h4, strong').first().text().trim();
-      const address = row.find('.adres, .address, td:nth-child(2)').text().trim();
-      const phone = row.find('.telefon, .phone, td:nth-child(3)').text().trim().replace(/\s+/g, '');
-      const district = row.find('.ilce, .district').text().trim();
-      if (name && name.length > 2) {
-        pharmacies.push({ name, address, phone: phone || null, district: district || null, lat: null, lng: null });
-      }
+    // Tablo satırlarında eczane adı ara
+    $('tr').each((i, el) => {
+      const cells = $(el).find('td');
+      if (cells.length < 1) return;
+      const name = $(cells[0]).text().trim();
+      if (!ECZAN.test(name) || name.length < 4) return;
+      const address = cells.length > 1 ? $(cells[1]).text().trim() : null;
+      const phoneRaw = cells.length > 2 ? $(cells[2]).text().trim() : (address || '');
+      const phoneMatch = phoneRaw.match(PHONE);
+      pharmacies.push({
+        name,
+        address: address || null,
+        phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null,
+        district: null, lat: null, lng: null
+      });
     });
 
-    // Alternatif: genel metin tabanlı parse
+    // Tablo yoksa: div/li bazlı parse
     if (pharmacies.length === 0) {
-      $('h2,h3,h4,.card,.list-item').each((i, el) => {
-        const text = $(el).text().trim();
-        if (text.includes('ECZ') || text.includes('Ecz')) {
-          pharmacies.push({ name: text.split('\n')[0].trim(), address: null, phone: null, district: null, lat: null, lng: null });
-        }
+      $('div, li, article, section').each((i, el) => {
+        const el$ = $(el);
+        const children = el$.children();
+        if (children.length > 5) return; // çok derin elementleri atla
+        const text = el$.clone().children().remove().end().text().trim();
+        if (!ECZAN.test(text) || text.length < 4 || text.length > 80) return;
+        const full = el$.text().trim();
+        const phoneMatch = full.match(PHONE);
+        pharmacies.push({
+          name: text,
+          address: null,
+          phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null,
+          district: null, lat: null, lng: null
+        });
       });
     }
 
