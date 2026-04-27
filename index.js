@@ -713,56 +713,41 @@ app.get('/api/duty-pharmacies', async (req, res) => {
       return res.json({ pharmacies, city });
     }
 
-    // Birden fazla kaynaktan dene
-    const HEADERS = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'tr-TR,tr;q=0.9',
+    // nosyapi.com — günde 100 istek ücretsiz, cache ile yeterli
+    const NOSYAPI_KEY = process.env.NOSYAPI_KEY;
+    if (!NOSYAPI_KEY) return res.json({ pharmacies: [], city, error: 'NOSYAPI_KEY gerekli' });
+
+    const CITY_IDS = {
+      'Adana':1,'Adıyaman':2,'Afyonkarahisar':3,'Ağrı':4,'Amasya':5,'Ankara':6,'Antalya':7,
+      'Artvin':8,'Aydın':9,'Balıkesir':10,'Bilecik':11,'Bingöl':12,'Bitlis':13,'Bolu':14,
+      'Burdur':15,'Bursa':16,'Çanakkale':17,'Çankırı':18,'Çorum':19,'Denizli':20,
+      'Diyarbakır':21,'Edirne':22,'Elazığ':23,'Erzincan':24,'Erzurum':25,'Eskişehir':26,
+      'Gaziantep':27,'Giresun':28,'Gümüşhane':29,'Hakkari':30,'Hatay':31,'Isparta':32,
+      'Mersin':33,'İstanbul':34,'İzmir':35,'Kars':36,'Kastamonu':37,'Kayseri':38,
+      'Kırklareli':39,'Kırşehir':40,'Kocaeli':41,'Konya':42,'Kütahya':43,'Malatya':44,
+      'Manisa':45,'Kahramanmaraş':46,'Mardin':47,'Muğla':48,'Muş':49,'Nevşehir':50,
+      'Niğde':51,'Ordu':52,'Rize':53,'Sakarya':54,'Samsun':55,'Siirt':56,'Sinop':57,
+      'Sivas':58,'Tekirdağ':59,'Tokat':60,'Trabzon':61,'Tunceli':62,'Şanlıurfa':63,
+      'Uşak':64,'Van':65,'Yozgat':66,'Zonguldak':67,'Aksaray':68,'Bayburt':69,
+      'Karaman':70,'Kırıkkale':71,'Batman':72,'Şırnak':73,'Bartın':74,'Ardahan':75,
+      'Iğdır':76,'Yalova':77,'Karabük':78,'Kilis':79,'Osmaniye':80,'Düzce':81
     };
-    const SOURCES = [
-      `https://www.eczaneler.net/nobetci-eczane/${slug}`,
-      `https://www.nobiron.com/nobetci-eczane/${slug}`,
-      `https://www.eczanem.com/nobetci-eczane/${slug}`,
-    ];
-    const ECZAN = /eczan/i;
-    const PHONE = /0?\s*\(?\d{3}\)?\s*\d{3}[\s-]?\d{2}[\s-]?\d{2}/;
-    let pharmacies = [];
-
-    for (const url of SOURCES) {
-      try {
-        const r = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
-        if (!r.ok) continue;
-        const html = await r.text();
-        const $ = cheerio.load(html);
-
-        // Tablo parse
-        $('tr').each((i, el) => {
-          const cells = $(el).find('td');
-          if (cells.length < 2) return;
-          const name = $(cells[0]).text().trim();
-          if (!ECZAN.test(name) || name.length < 5 || name.length > 100) return;
-          const address = $(cells[1]).text().trim();
-          const phoneRaw = cells.length > 2 ? $(cells[2]).text().trim() : address;
-          const phoneMatch = phoneRaw.match(PHONE);
-          pharmacies.push({ name, address: address || null, phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null, district: null, lat: null, lng: null });
-        });
-
-        // Card/list parse
-        if (pharmacies.length === 0) {
-          $('[class*="eczane"],[class*="pharmacy"],[class*="nobetci"],[class*="card"]').each((i, el) => {
-            const el$ = $(el);
-            const name = el$.find('h2,h3,h4,strong,.name,.title').first().text().trim();
-            if (!name || !ECZAN.test(name) || name.length < 5) return;
-            const address = el$.find('.adres,.address,p').first().text().trim();
-            const full = el$.text();
-            const phoneMatch = full.match(PHONE);
-            pharmacies.push({ name, address: address || null, phone: phoneMatch ? phoneMatch[0].replace(/\s+/g,'') : null, district: null, lat: null, lng: null });
-          });
-        }
-
-        if (pharmacies.length > 0) break; // Veri geldiyse dur
-      } catch(e) { continue; }
-    }
+    const cityId = CITY_IDS[city] || 34;
+    const r = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=${cityId}&apikey=${NOSYAPI_KEY}`);
+    const data = await r.json();
+    const pharmacies = (data.data || []).map(p => ({
+      name: p.eczane_adi || p.name || '',
+      address: p.adres || p.address || null,
+      phone: p.telefon || p.phone || null,
+      district: p.ilce || null,
+      lat: parseFloat(p.lat) || null,
+      lng: parseFloat(p.lng) || null,
+    })).filter(p => p.name)
+      .map(p => ({
+        ...p,
+        distance: (p.lat && p.lng) ? calcDistance(parseFloat(lat), parseFloat(lng), p.lat, p.lng) : null
+      }))
+      .sort((a, b) => (a.distance ?? 999999) - (b.distance ?? 999999));
 
     // Cache'e kaydet
     if (pharmacies.length > 0) _dutyCache[cacheKey] = pharmacies;
