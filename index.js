@@ -626,7 +626,7 @@ async function deleteUser(userId, name) {
 </html>`);
 });
 
-app.get('/', (req, res) => res.json({ status: 'ok', message: 'Sağlıklı Kal Backend çalışıyor 💊' }));
+app.get('/', (req, res) => res.json({ status: 'ok', message: 'Sağlıklı Kal Backend çalışıyor 💊', nosyapi: !!process.env.NOSYAPI_KEY }));
 
 // ── ECZANE API ──
 function calcDistance(lat1, lng1, lat2, lng2) {
@@ -637,28 +637,34 @@ function calcDistance(lat1, lng1, lat2, lng2) {
   return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 }
 
-// Yakın eczaneler — OpenStreetMap Overpass (ücretsiz, API key yok)
+// Yakın eczaneler — birden fazla Overpass mirror dene
 app.get('/api/nearby-pharmacies', async (req, res) => {
   const { lat, lng, radius = 3000 } = req.query;
   if (!lat || !lng) return res.status(400).json({ error: 'lat ve lng gerekli' });
-  try {
-    const query = `[out:json][timeout:15];node["amenity"="pharmacy"](around:${radius},${lat},${lng});out body;`;
-    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-    const r = await fetch(url);
-    const data = await r.json();
-    const pharmacies = (data.elements || []).map(el => ({
-      id: el.id,
-      name: el.tags.name || el.tags['name:tr'] || 'Eczane',
-      lat: el.lat,
-      lng: el.lon,
-      phone: el.tags.phone || el.tags['contact:phone'] || null,
-      address: [el.tags['addr:street'], el.tags['addr:housenumber']].filter(Boolean).join(' ') || null,
-      distance: calcDistance(parseFloat(lat), parseFloat(lng), el.lat, el.lon)
-    })).sort((a, b) => a.distance - b.distance).slice(0, 25);
-    res.json({ pharmacies });
-  } catch(e) {
-    res.status(500).json({ error: 'Eczane verisi alınamadı', pharmacies: [] });
+  const query = `[out:json][timeout:15];node["amenity"="pharmacy"](around:${radius},${lat},${lng});out body;`;
+  const mirrors = [
+    `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`,
+    `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encodeURIComponent(query)}`,
+    `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`,
+  ];
+  for (const url of mirrors) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (!data.elements) continue;
+      const pharmacies = data.elements.map(el => ({
+        id: el.id,
+        name: el.tags.name || el.tags['name:tr'] || 'Eczane',
+        lat: el.lat, lng: el.lon,
+        phone: el.tags.phone || el.tags['contact:phone'] || null,
+        address: [el.tags['addr:street'], el.tags['addr:housenumber']].filter(Boolean).join(' ') || null,
+        distance: calcDistance(parseFloat(lat), parseFloat(lng), el.lat, el.lon)
+      })).sort((a, b) => a.distance - b.distance).slice(0, 25);
+      return res.json({ pharmacies });
+    } catch(e) { continue; }
   }
+  res.json({ pharmacies: [], error: 'Eczane verisi alınamadı' });
 });
 
 // Nöbetçi eczane — eczaneler.net scraping (API key yok, tamamen ücretsiz)
