@@ -628,6 +628,16 @@ async function deleteUser(userId, name) {
 
 app.get('/', (req, res) => res.json({ status: 'ok', message: 'Sağlıklı Kal Backend çalışıyor 💊', nosyapi: !!process.env.NOSYAPI_KEY }));
 
+app.get('/debug/nosyapi', async (req, res) => {
+  const key = process.env.NOSYAPI_KEY;
+  if (!key) return res.json({ error: 'key yok' });
+  try {
+    const r = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=28&apikey=${key}`);
+    const data = await r.json();
+    res.json(data);
+  } catch(e) { res.json({ error: e.message }); }
+});
+
 // ── ECZANE API ──
 function calcDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000;
