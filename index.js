@@ -634,7 +634,13 @@ app.get('/debug/nosyapi', async (req, res) => {
   try {
     const r = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=28&apikey=${key}`);
     const data = await r.json();
-    res.json(data);
+    res.json({
+      result: data,
+      keyLength: key.length,
+      keyStart: key.slice(0, 5),
+      keyEnd: key.slice(-5),
+      keyHasNewline: key.includes('\n') || key.includes('\r')
+    });
   } catch(e) { res.json({ error: e.message }); }
 });
 
