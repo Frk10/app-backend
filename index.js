@@ -632,15 +632,14 @@ app.get('/debug/nosyapi', async (req, res) => {
   const key = process.env.NOSYAPI_KEY;
   if (!key) return res.json({ error: 'key yok' });
   try {
-    // Query param ile dene
-    const r1 = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=28&apikey=${key}`);
+    const cleanKey = key.trim().replace(/['"]/g, '');
+    // Doğru format: apiKey (büyük K), city+district parametreleri
+    const r1 = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?apiKey=${cleanKey}&city=istanbul&district=kadikoy`);
     const d1 = await r1.json();
-    // Header ile dene
-    const r2 = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=28`, {
-      headers: { 'Authorization': `apikey ${key}`, 'apikey': key }
-    });
+    // Cities endpoint (0 kredi)
+    const r2 = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty/cities?apiKey=${cleanKey}`);
     const d2 = await r2.json();
-    res.json({ queryParam: d1, header: d2, keyLength: key.length, keyStart: key.slice(0,5), keyEnd: key.slice(-5) });
+    res.json({ withCity: d1, cities: d2, keyLength: cleanKey.length });
   } catch(e) { res.json({ error: e.message }); }
 });
 
