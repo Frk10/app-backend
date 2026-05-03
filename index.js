@@ -753,17 +753,19 @@ app.get('/api/duty-pharmacies', async (req, res) => {
       'Karaman':70,'Kırıkkale':71,'Batman':72,'Şırnak':73,'Bartın':74,'Ardahan':75,
       'Iğdır':76,'Yalova':77,'Karabük':78,'Kilis':79,'Osmaniye':80,'Düzce':81
     };
-    const cityId = CITY_IDS[city] || 34;
-    const r = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?cityId=${cityId}&apikey=${NOSYAPI_KEY}`);
+    // Şehir slug'ını nosyapi cities formatına çevir
+    const citySlugMap = { 'İstanbul':'istanbul','Ankara':'ankara','İzmir':'izmir','Bursa':'bursa','Antalya':'antalya','Adana':'adana','Konya':'konya','Gaziantep':'gaziantep','Mersin':'mersin','Kocaeli':'kocaeli','Diyarbakır':'diyarbakir','Eskişehir':'eskisehir','Samsun':'samsun','Kayseri':'kayseri','Balıkesir':'balikesir','Sakarya':'sakarya','Trabzon':'trabzon','Malatya':'malatya','Kahramanmaraş':'kahramanmaras','Erzurum':'erzurum','Van':'van','Giresun':'giresun','Rize':'rize' };
+    const citySlug = citySlugMap[city] || slug;
+    const cleanKey = NOSYAPI_KEY.trim().replace(/['"]/g, '');
+    const r = await fetch(`https://www.nosyapi.com/apiv2/service/pharmacies-on-duty?apiKey=${cleanKey}&city=${citySlug}`);
     const data = await r.json();
-    console.log('nosyapi response:', JSON.stringify(data).slice(0, 500));
-    const pharmacies = (data.data || data.result || data.pharmacies || []).map(p => ({
-      name: p.eczane_adi || p.name || '',
-      address: p.adres || p.address || null,
-      phone: p.telefon || p.phone || null,
-      district: p.ilce || null,
-      lat: parseFloat(p.lat) || null,
-      lng: parseFloat(p.lng) || null,
+    const pharmacies = (data.data || []).map(p => ({
+      name: p.pharmacyName || '',
+      address: p.address || null,
+      phone: p.phone || null,
+      district: p.district || null,
+      lat: parseFloat(p.latitude) || null,
+      lng: parseFloat(p.longitude) || null,
     })).filter(p => p.name)
       .map(p => ({
         ...p,
